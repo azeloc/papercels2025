@@ -49,6 +49,8 @@ modelo_regressao = coxph(
   data = base_sobrevivencia |> left_join(covariavel),
   id = numeProcesso)
 
+cox.zph(modelo_regressao)
+
 modelo_regressao |>
   stargazer::stargazer()
 
@@ -64,4 +66,46 @@ library(stargazer)
 
 modelo|>
   stargazer::stargazer()
+
+base_com_covariaveis <- base_sobrevivencia |>
+  left_join(covariavel) |>
+  mutate(l_val = log(valor_numerico),
+         indicador = 1)
+
+eventos <- as.character(sort(unique(base_com_covariaveis$evento))[-1])
+coeficientes_finegray <- purrr::map_dfr(eventos, function(evento){
+
+  cox_data <- finegray(
+    Surv(Time, evento) ~ l_val,
+    data=base_com_covariaveis,
+    etype=evento)
+
+  coeficientes <- coxph(Surv(fgstart, fgstop, fgstatus) ~ l_val,
+      data=cox_data,
+      weights= fgwt) |>
+    broom::tidy() |>
+    mutate(
+      event = evento, .before = "term"
+    )
+})
+
+modelo_regressao <- coxph(
+  Surv(Time, evento) ~ l_val,
+  data = base_com_covariaveis,
+  id = numeProcesso)
+
+s <- survfit(modelo_regressao, newdata = data.frame(l_val = c(0)))
+pstates <- s$pstate
+last_time <- nrow(pstates)
+
+final_cif <- pstates[last_time,,2:(1+length(eventos))]
+
+coefficients_table <- coeficientes_finegray |>
+  mutate(
+    base_cif = final_cif,
+    cif_10k_brl = (1-(1-base_cif)^(exp(estimate*log(10^3)))),
+    marginal = cif_10k_brl-base_cif
+  ) |>
+  select(-statistic)
+
 
