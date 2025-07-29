@@ -100,12 +100,18 @@ last_time <- nrow(pstates)
 
 final_cif <- pstates[last_time,,2:(1+length(eventos))]
 
+s2 <- survfit(modelo_regressao, newdata = data.frame(l_val = log(10000)))
+plot(s2)
+
+pstates <- s2$pstate
+last_time <- nrow(pstates)
+
+final_cif_cox <- pstates[last_time,,2:(1+length(eventos))]
+
 coefficients_table <- coeficientes_finegray |>
   mutate(
-    base_cif = final_cif,
-    cif_10k_brl = (1-(1-base_cif)^(exp(estimate*log(10^3)))),
-    marginal = cif_10k_brl-base_cif
+    baseline_cif = final_cif,
+    cif_10k_brl = final_cif_cox,
+    marginal = cif_10k_brl-baseline_cif
   ) |>
   select(-statistic)
-
-
