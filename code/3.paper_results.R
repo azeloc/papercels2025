@@ -14,6 +14,8 @@ library(ggfortify)
 
 modelo <- survfit(Surv(Time, evento) ~ 1, data = base_sobrevivencia)
 
+teste <- survfit(Surv(Time, evento) ~ 1, data = base_sobrevivencia |> mutate(evento = evento != "censor"))
+
 grafico <- modelo |>
   autoplot()
 
@@ -42,7 +44,9 @@ covariavel = dados |>
     dataRecebimento = lubridate::dmy(dataRecebimento),
     valor_numerico = gera_valor(valor)
   ) |>
-  select(numeProcesso, valor_numerico)
+  select(numeProcesso, dataRecebimento, valor_numerico, assunto_info, nmForo, classe_info)
+
+base_sobrevivencia |> left_join(covariavel) |> writexl::write_xlsx("20250806_dados_civeis.xlsx")
 
 modelo_regressao = coxph(
   Surv(Time, evento) ~ log(valor_numerico),
@@ -53,6 +57,71 @@ cox.zph(modelo_regressao)
 
 modelo_regressao |>
   stargazer::stargazer()
+
+base_grafico_dinheiro <- base_sobrevivencia |> left_join(covariavel) |>
+  mutate(
+    faixa_valor = case_when(
+      valor_numerico <= 2000 ~ "< 2000",
+      valor_numerico <= 5000 ~ "< 5000",
+      valor_numerico <= 15000 ~ "< 15000",
+      valor_numerico <= 20000 ~ "< 20000",
+      valor_numerico <= 30000 ~ "< 30000",
+      TRUE ~ "> 40000"
+    )
+  )
+
+survfit(
+  Surv(Time, evento) ~ year(dataRecebimento),
+  data = base_grafico_dinheiro |>
+  mutate(evento = evento != "censor"))
+
+modelo2 <- survfit(Surv(Time, evento) ~ faixa_valor, data = base_grafico_dinheiro |>
+                     mutate(evento = evento != "censor"))
+
+dados_adicionais <- base_grafico_dinheiro |>
+  filter(evento != "censor") |>
+  group_by(faixa_valor) |>
+  summarise(
+    time = median(Time)
+  ) |>
+  ungroup() |>
+  mutate(
+    faixa_valor = as.numeric(str_remove_all(faixa_valor, "(<|>) "))
+  )
+
+modelo2 |> broom::tidy() |>
+  group_by(strata) |>
+  filter(estimate == estimate[which.min((estimate/(max(estimate)) - 0.5)^2)]) |>
+  slice_head(n = 1) |>
+  ungroup() |>
+  mutate(
+    faixa_valor = as.numeric(str_remove_all(strata, "faixa_valor=(<|>)")),
+    estimate_type = "Survival Analysis"
+  ) |>
+  bind_rows(
+    dados_adicionais |>
+    mutate(
+      estimate_type = "Complete Case"
+    )
+  ) |>
+  ggplot(aes(x = faixa_valor, y = time, linetype = estimate_type)) +
+  geom_line() +
+  geom_point(size =2) +
+  theme_bw() +
+  labs(x = "Case Amount (BRL)", y = "Mean Time until Trial (days)", color = "Trial outcome",
+       linetype = "") +
+  theme(legend.position = "bottom")
+
+grafico2 <- modelo2 |>
+  autoplot()
+
+grafico2$data |>
+  filter(time > 0) |>
+  ggplot(aes(x = time, y = pstate, color = event, linetype = strata)) +
+  geom_step() +
+  theme_bw() +
+  labs(x = "Time in days", color = "Outcome", y = "Probability of each event")
+
 
 library(nnet)
 
@@ -115,3 +184,22 @@ coefficients_table <- coeficientes_finegray |>
     marginal = cif_10k_brl-baseline_cif
   ) |>
   select(-statistic)
+
+prevalencia = base_sobrevivencia |> ungroup() |> filter(evento != "censor") |>   count(evento) |> mutate(p = n/sum(n))
+
+tibble(
+  evento = prevalencia$evento,
+  `Complete case probability` = prevalencia$p,
+  `Survival adjusted probability` = final_cif_cox
+) |>
+  pivot_longer(-evento) |>
+  mutate(
+    name = fct_relevel(name,
+                      c("Survival adjusted probability",
+                      "Complete case probability"))
+  ) |>
+  ggplot(aes(x = evento, y = value, fill = name)) +
+  geom_col(position = "dodge") +
+  theme_minimal() +
+  theme(legend.position = "bottom") +
+  labs(x = "", y = "", fill = "")
